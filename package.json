@@ -5,5 +5,8 @@
   "scripts": {
     "build": "echo 'Build completed'",
     "test": "echo 'Tests passed'"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   }
 }
