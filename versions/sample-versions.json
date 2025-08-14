@@ -1,0 +1,115 @@
+{
+  "docker_images": [
+    {
+      "name": "app",
+      "tag": "v2.1.0",
+      "created": "2024-01-15T10:00:00Z",
+      "size": "256MB",
+      "environment": "production"
+    },
+    {
+      "name": "app",
+      "tag": "v2.0.0",
+      "created": "2024-01-01T10:00:00Z",
+      "size": "255MB",
+      "environment": "production"
+    },
+    {
+      "name": "app",
+      "tag": "v1.9.0",
+      "created": "2023-12-15T10:00:00Z",
+      "size": "254MB",
+      "environment": "staging"
+    },
+    {
+      "name": "app",
+      "tag": "v1.8.0",
+      "created": "2023-12-01T10:00:00Z",
+      "size": "253MB",
+      "environment": "development"
+    },
+    {
+      "name": "app",
+      "tag": "v1.7.0",
+      "created": "2023-11-15T10:00:00Z",
+      "size": "252MB",
+      "environment": "development"
+    },
+    {
+      "name": "app",
+      "tag": "v1.6.0",
+      "created": "2023-11-01T10:00:00Z",
+      "size": "251MB",
+      "environment": "development"
+    }
+  ],
+  "deployment_manifests": [
+    {
+      "filename": "deployment-v2.1.0.yaml",
+      "version": "v2.1.0",
+      "last_deployed": "2024-01-15T10:00:00Z",
+      "environment": "production"
+    },
+    {
+      "filename": "deployment-v2.0.0.yaml",
+      "version": "v2.0.0",
+      "last_deployed": "2024-01-01T10:00:00Z",
+      "environment": "production"
+    },
+    {
+      "filename": "deployment-v1.9.0.yaml",
+      "version": "v1.9.0",
+      "last_deployed": "2023-12-15T10:00:00Z",
+      "environment": "staging"
+    },
+    {
+      "filename": "deployment-v1.8.0.yaml",
+      "version": "v1.8.0",
+      "last_deployed": "2023-12-01T10:00:00Z",
+      "environment": "development"
+    },
+    {
+      "filename": "deployment-v1.7.0.yaml",
+      "version": "v1.7.0",
+      "last_deployed": "2023-11-15T10:00:00Z",
+      "environment": "development"
+    }
+  ],
+  "release_artifacts": [
+    {
+      "filename": "release-v2.1.0.zip",
+      "version": "v2.1.0",
+      "size": "45MB",
+      "created": "2024-01-15T10:00:00Z",
+      "environment": "production"
+    },
+    {
+      "filename": "release-v2.0.0.zip",
+      "version": "v2.0.0",
+      "size": "44MB",
+      "created": "2024-01-01T10:00:00Z",
+      "environment": "production"
+    },
+    {
+      "filename": "release-v1.9.0.zip",
+      "version": "v1.9.0",
+      "size": "43MB",
+      "created": "2023-12-15T10:00:00Z",
+      "environment": "staging"
+    },
+    {
+      "filename": "release-v1.8.0.zip",
+      "version": "v1.8.0",
+      "size": "42MB",
+      "created": "2023-12-01T10:00:00Z",
+      "environment": "development"
+    },
+    {
+      "filename": "release-v1.7.0.zip",
+      "version": "v1.7.0",
+      "size": "41MB",
+      "created": "2023-11-15T10:00:00Z",
+      "environment": "development"
+    }
+  ]
+}
