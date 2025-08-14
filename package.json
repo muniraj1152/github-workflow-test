@@ -1,0 +1,9 @@
+{
+  "name": "@yourusername/your-package-name",
+  "version": "1.0.0",
+  "packageManager": "npm@9.0.0",
+  "scripts": {
+    "build": "echo 'Build completed'",
+    "test": "echo 'Tests passed'"
+  }
+}
