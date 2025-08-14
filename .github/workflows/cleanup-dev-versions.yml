@@ -4,7 +4,7 @@ on:
   pull_request:
     types: [closed]
     branches:
-      - 'main'  # Change this to your target branch
+      - 'main'
 
   workflow_dispatch:
     inputs:
@@ -33,7 +33,7 @@ jobs:
         with:
           node-version: '18'
           registry-url: 'https://npm.pkg.github.com'
-          scope: '@yourusername'  # Change this to your GitHub username
+          scope: '@muniraj1152'
           
       - run: npm install
         
@@ -74,9 +74,9 @@ jobs:
       - name: Cleanup dev versions
         id: cleanup
         run: |
-          # Package name - CHANGE THIS TO YOUR PACKAGE NAME
-          PACKAGE_NAME="@yourusername/your-package-name"
-          PACKAGE_NAME_CLEAN=$(echo $PACKAGE_NAME | sed 's/@yourusername\///')
+          # Package name
+          PACKAGE_NAME="@muniraj1152/github-workflow-test"
+          PACKAGE_NAME_CLEAN=$(echo $PACKAGE_NAME | sed 's/@muniraj1152\///')
           
           # Get PR branch for cleanup
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -96,7 +96,7 @@ jobs:
           echo "Versions to ignore: $IGNORE_VERSIONS"
           
           # Configure npm for GitHub Package Registry
-          npm config set @yourusername:registry https://npm.pkg.github.com
+          npm config set @muniraj1152:registry https://npm.pkg.github.com
           npm config set //npm.pkg.github.com/:_authToken $GITHUB_TOKEN
           
           # Get all versions and filter for dev versions from this branch
@@ -167,41 +167,4 @@ jobs:
                 fi
               fi
               
-              echo "  ❌ Deleting version: $version"
-              
-              # Find the specific version ID from the cached response
-              VERSION_ID=$(echo "$VERSIONS_RESPONSE" | jq -r ".[] | select(.name == \"$version\") | .id // empty")
-              
-              if [ -z "$VERSION_ID" ]; then
-                echo "  ❌ Could not find version ID for $version"
-                continue
-              fi
-              
-              # Delete the specific version using the correct endpoint
-              DELETE_RESPONSE=$(curl -s -w "%{http_code}" \
-                -X DELETE \
-                -H "Authorization: token ${{ github.token }}" \
-                -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/user/packages/npm/$PACKAGE_NAME_CLEAN/versions/$VERSION_ID")
-              
-              # Extract HTTP status code (last 3 characters)
-              HTTP_STATUS="${DELETE_RESPONSE: -3}"
-              RESPONSE_BODY="${DELETE_RESPONSE%???}"
-              
-              if [ "$HTTP_STATUS" = "204" ] || [ "$HTTP_STATUS" = "200" ]; then
-                echo "  ✅ Successfully deleted $version via GitHub API"
-                CLEANUP_COUNT=$((CLEANUP_COUNT + 1))
-              else
-                echo "  ⚠️  Failed to delete $version via GitHub API (HTTP $HTTP_STATUS)"
-                echo "  Response: $RESPONSE_BODY"
-              fi
-            fi
-          done
-          
-          echo "Cleanup completed!"
-          echo "Total dev versions processed: $TOTAL_COUNT"
-          echo "Versions cleaned up: $CLEANUP_COUNT"
-          
-          # Set outputs for summary
-          echo "cleanup_count=$CLEANUP_COUNT" >> $GITHUB_OUTPUT
-          echo "total_count=$TOTAL_COUNT" >> $GITHUB_OUTPUT
+              echo "
