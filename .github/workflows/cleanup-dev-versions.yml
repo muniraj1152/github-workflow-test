@@ -141,12 +141,10 @@ jobs:
             -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/user/packages/npm/$PACKAGE_NAME_CLEAN/versions")
           
-          # Process each dev version
-          mapfile -t VERSION_ARRAY <<< "$VERSIONS"
+          # Process each dev version - simplified to avoid quote issues
+          echo "Processing versions..."
           
-          echo "Processing ${#VERSION_ARRAY[@]} versions..."
-          
-          for version in "${VERSION_ARRAY[@]}"; do
+          while IFS= read -r version; do
             if [ -n "$version" ]; then
               TOTAL_COUNT=$((TOTAL_COUNT + 1))
               echo "Processing version $TOTAL_COUNT: $version"
@@ -167,4 +165,41 @@ jobs:
                 fi
               fi
               
-              echo "
+              echo "  ❌ Deleting version: $version"
+              
+              # Find the specific version ID from the cached response
+              VERSION_ID=$(echo "$VERSIONS_RESPONSE" | jq -r ".[] | select(.name == \"$version\") | .id // empty")
+              
+              if [ -z "$VERSION_ID" ]; then
+                echo "  ❌ Could not find version ID for $version"
+                continue
+              fi
+              
+              # Delete the specific version using the correct endpoint
+              DELETE_RESPONSE=$(curl -s -w "%{http_code}" \
+                -X DELETE \
+                -H "Authorization: token ${{ github.token }}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/user/packages/npm/$PACKAGE_NAME_CLEAN/versions/$VERSION_ID")
+              
+              # Extract HTTP status code (last 3 characters)
+              HTTP_STATUS="${DELETE_RESPONSE: -3}"
+              RESPONSE_BODY="${DELETE_RESPONSE%???}"
+              
+              if [ "$HTTP_STATUS" = "204" ] || [ "$HTTP_STATUS" = "200" ]; then
+                echo "  ✅ Successfully deleted $version via GitHub API"
+                CLEANUP_COUNT=$((CLEANUP_COUNT + 1))
+              else
+                echo "  ⚠️  Failed to delete $version via GitHub API (HTTP $HTTP_STATUS)"
+                echo "  Response: $RESPONSE_BODY"
+              fi
+            fi
+          done <<< "$VERSIONS"
+          
+          echo "Cleanup completed!"
+          echo "Total dev versions processed: $TOTAL_COUNT"
+          echo "Versions cleaned up: $CLEANUP_COUNT"
+          
+          # Set outputs for summary
+          echo "cleanup_count=$CLEANUP_COUNT" >> $GITHUB_OUTPUT
+          echo "total_count=$TOTAL_COUNT" >> $GITHUB_OUTPUT
