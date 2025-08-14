@@ -4,7 +4,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     branches:
-      - 'main'  # Change this to your target branch
+      - 'main'
 
 permissions:
   contents: read
@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: '18'
           registry-url: 'https://npm.pkg.github.com'
-          scope: '@yourusername'  # Change this to your GitHub username
+          scope: '@yourusername'  # Replace with your actual GitHub username
           
       - run: npm install
       - run: npm run build
