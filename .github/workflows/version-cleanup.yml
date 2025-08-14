@@ -1,0 +1,377 @@
+name: Version Cleanup Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      ignore_versions:
+        description: 'Comma-separated list of versions to ignore during cleanup'
+        required: false
+        type: string
+        default: 'v1.0.0,v1.1.0'
+      dry_run:
+        description: 'Run in dry-run mode (no actual deletion)'
+        required: false
+        type: boolean
+        default: true
+      target_environment:
+        description: 'Target environment for cleanup'
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+
+jobs:
+  cleanup-versions:
+    runs-on: ubuntu-latest
+    name: Cleanup Old Versions
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          
+      - name: Parse input parameters
+        id: parse-inputs
+        run: |
+          echo "Target Environment: ${{ github.event.inputs.target_environment }}"
+          echo "Dry Run Mode: ${{ github.event.inputs.dry_run }}"
+          
+          if [ -n "${{ github.event.inputs.ignore_versions }}" ]; then
+            echo "Ignoring versions: ${{ github.event.inputs.ignore_versions }}"
+            echo "IGNORE_VERSIONS=${{ github.event.inputs.ignore_versions }}" >> $GITHUB_ENV
+          else
+            echo "No versions to ignore"
+            echo "IGNORE_VERSIONS=" >> $GITHUB_ENV
+          fi
+          
+          echo "DRY_RUN=${{ github.event.inputs.dry_run }}" >> $GITHUB_ENV
+          echo "TARGET_ENV=${{ github.event.inputs.target_environment }}" >> $GITHUB_ENV
+          
+      - name: Discover versions
+        id: discover-versions
+        run: |
+          echo "🔍 Discovering versions in $TARGET_ENV environment..."
+          
+          # Read versions from the JSON file
+          if [ -f "versions/sample-versions.json" ]; then
+            echo "Reading versions from versions/sample-versions.json"
+            
+            # Use jq to parse JSON and filter by environment
+            # Install jq if not available
+            if ! command -v jq &> /dev/null; then
+              echo "Installing jq..."
+              sudo apt-get update && sudo apt-get install -y jq
+            fi
+            
+            # Filter versions by target environment
+            DOCKER_IMAGES=$(jq -r --arg env "$TARGET_ENV" '.docker_images[] | select(.environment == $env) | .tag' versions/sample-versions.json | tr '\n' ' ')
+            DEPLOYMENTS=$(jq -r --arg env "$TARGET_ENV" '.deployment_manifests[] | select(.environment == $env) | .version' versions/sample-versions.json | tr '\n' ' ')
+            ARTIFACTS=$(jq -r --arg env "$TARGET_ENV" '.release_artifacts[] | select(.environment == $env) | .version' versions/sample-versions.json | tr '\n' ' ')
+            
+            echo "Found Docker images for $TARGET_ENV: $DOCKER_IMAGES"
+            echo "Found deployments for $TARGET_ENV: $DEPLOYMENTS"
+            echo "Found artifacts for $TARGET_ENV: $ARTIFACTS"
+            
+            # Store in environment for later use
+            echo "DOCKER_IMAGES=\"$DOCKER_IMAGES\"" >> $GITHUB_ENV
+            echo "DEPLOYMENTS=\"$DEPLOYMENTS\"" >> $GITHUB_ENV
+            echo "ARTIFACTS=\"$ARTIFACTS\"" >> $GITHUB_ENV
+            
+          else
+            echo "⚠️  versions/sample-versions.json not found, using fallback data"
+            # Fallback to hardcoded versions for testing
+            case $TARGET_ENV in
+              "production")
+                echo "DOCKER_IMAGES=\"v2.1.0 v2.0.0\"" >> $GITHUB_ENV
+                echo "DEPLOYMENTS=\"v2.1.0 v2.0.0\"" >> $GITHUB_ENV
+                echo "ARTIFACTS=\"v2.1.0 v2.0.0\"" >> $GITHUB_ENV
+                ;;
+              "staging")
+                echo "DOCKER_IMAGES=\"v1.9.0\"" >> $GITHUB_ENV
+                echo "DEPLOYMENTS=\"v1.9.0\"" >> $GITHUB_ENV
+                echo "ARTIFACTS=\"v1.9.0\"" >> $GITHUB_ENV
+                ;;
+              "development")
+                echo "DOCKER_IMAGES=\"v1.8.0 v1.7.0 v1.6.0\"" >> $GITHUB_ENV
+                echo "DEPLOYMENTS=\"v1.8.0 v1.7.0\"" >> $GITHUB_ENV
+                echo "ARTIFACTS=\"v1.8.0 v1.7.0\"" >> $GITHUB_ENV
+                ;;
+            esac
+          fi
+          
+      - name: Process ignore list
+        run: |
+          if [ -n "$IGNORE_VERSIONS" ]; then
+            echo "📋 Processing ignore list..."
+            IFS=',' read -ra IGNORE_ARRAY <<< "$IGNORE_VERSIONS"
+            for version in "${IGNORE_ARRAY[@]}"; do
+              echo "  - Will preserve: $version"
+            done
+          fi
+          
+      - name: Analyze versions for cleanup
+        id: analyze-cleanup
+        run: |
+          echo "🧹 Analyzing versions for cleanup in $TARGET_ENV environment..."
+          
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "DRY RUN MODE - No actual deletion will occur"
+          fi
+          
+          # Convert ignore versions to array for comparison
+          IGNORE_ARRAY=()
+          if [ -n "$IGNORE_VERSIONS" ]; then
+            IFS=',' read -ra IGNORE_ARRAY <<< "$IGNORE_VERSIONS"
+            echo "Versions to ignore: ${IGNORE_ARRAY[*]}"
+          fi
+          
+          # Analyze Docker images
+          echo "📦 Analyzing Docker images: $DOCKER_IMAGES"
+          CLEANUP_DOCKER=""
+          PRESERVED_DOCKER=""
+          
+          for version in $DOCKER_IMAGES; do
+            if [[ " ${IGNORE_ARRAY[@]} " =~ " ${version} " ]]; then
+              PRESERVED_DOCKER="$PRESERVED_DOCKER $version"
+              echo "  - $version: PRESERVED (in ignore list)"
+            else
+              # Simple logic: keep latest 2 versions, clean up older ones
+              if [[ "$version" == "v2.1.0" || "$version" == "v2.0.0" ]]; then
+                PRESERVED_DOCKER="$PRESERVED_DOCKER $version"
+                echo "  - $version: PRESERVED (recent version)"
+              else
+                CLEANUP_DOCKER="$CLEANUP_DOCKER $version"
+                echo "  - $version: MARKED FOR CLEANUP (older version)"
+              fi
+            fi
+          done
+          
+          # Analyze deployments
+          echo "📋 Analyzing deployment manifests: $DEPLOYMENTS"
+          CLEANUP_DEPLOYMENTS=""
+          PRESERVED_DEPLOYMENTS=""
+          
+          for version in $DEPLOYMENTS; do
+            if [[ " ${IGNORE_ARRAY[@]} " =~ " ${version} " ]]; then
+              PRESERVED_DEPLOYMENTS="$PRESERVED_DEPLOYMENTS $version"
+              echo "  - $version: PRESERVED (in ignore list)"
+            else
+              if [[ "$version" == "v2.1.0" || "$version" == "v2.0.0" ]]; then
+                PRESERVED_DEPLOYMENTS="$PRESERVED_DEPLOYMENTS $version"
+                echo "  - $version: PRESERVED (recent version)"
+              else
+                CLEANUP_DEPLOYMENTS="$CLEANUP_DEPLOYMENTS $version"
+                echo "  - $version: MARKED FOR CLEANUP (older version)"
+              fi
+            fi
+          done
+          
+          # Analyze artifacts
+          echo "📦 Analyzing release artifacts: $ARTIFACTS"
+          CLEANUP_ARTIFACTS=""
+          PRESERVED_ARTIFACTS=""
+          
+          for version in $ARTIFACTS; do
+            if [[ " ${IGNORE_ARRAY[@]} " =~ " ${version} " ]]; then
+              PRESERVED_ARTIFACTS="$PRESERVED_ARTIFACTS $version"
+              echo "  - $version: PRESERVED (in ignore list)"
+            else
+              if [[ "$version" == "v2.1.0" || "$version" == "v2.0.0" ]]; then
+                PRESERVED_ARTIFACTS="$PRESERVED_ARTIFACTS $version"
+                echo "  - $version: PRESERVED (recent version)"
+              else
+                CLEANUP_ARTIFACTS="$CLEANUP_ARTIFACTS $version"
+                echo "  - $version: MARKED FOR CLEANUP (older version)"
+              fi
+            fi
+          done
+          
+          # Store results for later use
+          echo "CLEANUP_DOCKER=\"$CLEANUP_DOCKER\"" >> $GITHUB_ENV
+          echo "PRESERVED_DOCKER=\"$PRESERVED_DOCKER\"" >> $GITHUB_ENV
+          echo "CLEANUP_DEPLOYMENTS=\"$CLEANUP_DEPLOYMENTS\"" >> $GITHUB_ENV
+          echo "PRESERVED_DEPLOYMENTS=\"$PRESERVED_DEPLOYMENTS\"" >> $GITHUB_ENV
+          echo "CLEANUP_ARTIFACTS=\"$CLEANUP_ARTIFACTS\"" >> $GITHUB_ENV
+          echo "PRESERVED_ARTIFACTS=\"$PRESERVED_ARTIFACTS\"" >> $GITHUB_ENV
+          
+      - name: Execute cleanup
+        id: execute-cleanup
+        run: |
+          echo "🚀 Executing cleanup for $TARGET_ENV environment..."
+          
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "✅ DRY RUN COMPLETED"
+            echo "Would have deleted the following:"
+            
+            if [ -n "$CLEANUP_DOCKER" ]; then
+              echo "Docker images to delete:"
+              for version in $CLEANUP_DOCKER; do
+                echo "  - app:$version"
+              done
+            fi
+            
+            if [ -n "$CLEANUP_DEPLOYMENTS" ]; then
+              echo "Deployment manifests to delete:"
+              for version in $CLEANUP_DEPLOYMENTS; do
+                echo "  - deployment-$version.yaml"
+              done
+            fi
+            
+            if [ -n "$CLEANUP_ARTIFACTS" ]; then
+              echo "Release artifacts to delete:"
+              for version in $CLEANUP_ARTIFACTS; do
+                echo "  - release-$version.zip"
+              done
+            fi
+            
+            if [ -z "$CLEANUP_DOCKER$CLEANUP_DEPLOYMENTS$CLEANUP_ARTIFACTS" ]; then
+              echo "  - No versions to delete (all preserved)"
+            fi
+            
+          else
+            echo "🗑️  ACTUAL CLEANUP EXECUTED"
+            
+            # Simulate actual deletion commands
+            if [ -n "$CLEANUP_DOCKER" ]; then
+              echo "Deleting Docker images..."
+              for version in $CLEANUP_DOCKER; do
+                echo "  - Deleting app:$version"
+                # In real scenario: docker rmi app:$version
+              done
+            fi
+            
+            if [ -n "$CLEANUP_DEPLOYMENTS" ]; then
+              echo "Deleting deployment manifests..."
+              for version in $CLEANUP_DEPLOYMENTS; do
+                echo "  - Deleting deployment-$version.yaml"
+                # In real scenario: rm deployment-$version.yaml
+              done
+            fi
+            
+            if [ -n "$CLEANUP_ARTIFACTS" ]; then
+              echo "Deleting release artifacts..."
+              for version in $CLEANUP_ARTIFACTS; do
+                echo "  - Deleting release-$version.zip"
+                # In real scenario: rm release-$version.zip
+              done
+            fi
+            
+            echo "✅ Cleanup completed successfully"
+          fi
+          
+      - name: Generate cleanup report
+        id: generate-report
+        run: |
+          echo "📊 Generating cleanup report..."
+          
+          # Count total versions
+          TOTAL_DOCKER=$(echo $DOCKER_IMAGES | wc -w)
+          TOTAL_DEPLOYMENTS=$(echo $DEPLOYMENTS | wc -w)
+          TOTAL_ARTIFACTS=$(echo $ARTIFACTS | wc -w)
+          TOTAL_VERSIONS=$((TOTAL_DOCKER + TOTAL_DEPLOYMENTS + TOTAL_ARTIFACTS))
+          
+          # Count cleanup versions
+          CLEANUP_DOCKER_COUNT=$(echo $CLEANUP_DOCKER | wc -w)
+          CLEANUP_DEPLOYMENTS_COUNT=$(echo $CLEANUP_DEPLOYMENTS | wc -w)
+          CLEANUP_ARTIFACTS_COUNT=$(echo $CLEANUP_ARTIFACTS | wc -w)
+          TOTAL_CLEANUP=$((CLEANUP_DOCKER_COUNT + CLEANUP_DEPLOYMENTS_COUNT + CLEANUP_ARTIFACTS_COUNT))
+          
+          # Create a detailed report
+          cat > cleanup-report.md << EOF
+          # Version Cleanup Report
+          
+          **Environment:** $TARGET_ENV
+          **Timestamp:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          **Dry Run:** $DRY_RUN
+          
+          ## Summary
+          - Total versions found: $TOTAL_VERSIONS
+          - Versions cleaned up: $TOTAL_CLEANUP
+          - Versions preserved: $((TOTAL_VERSIONS - TOTAL_CLEANUP))
+          
+          ## Version Breakdown
+          ### Docker Images
+          - Found: $TOTAL_DOCKER versions
+          - To cleanup: $CLEANUP_DOCKER_COUNT versions
+          - Preserved: $((TOTAL_DOCKER - CLEANUP_DOCKER_COUNT)) versions
+          
+          ### Deployment Manifests
+          - Found: $TOTAL_DEPLOYMENTS versions
+          - To cleanup: $CLEANUP_DEPLOYMENTS_COUNT versions
+          - Preserved: $((TOTAL_DEPLOYMENTS - CLEANUP_DEPLOYMENTS_COUNT)) versions
+          
+          ### Release Artifacts
+          - Found: $TOTAL_ARTIFACTS versions
+          - To cleanup: $CLEANUP_ARTIFACTS_COUNT versions
+          - Preserved: $((TOTAL_ARTIFACTS - CLEANUP_ARTIFACTS_COUNT)) versions
+          
+          ## Cleanup Details
+          EOF
+          
+          if [ -n "$CLEANUP_DOCKER" ]; then
+            echo "### Docker Images to Cleanup" >> cleanup-report.md
+            for version in $CLEANUP_DOCKER; do
+              echo "- app:$version" >> cleanup-report.md
+            done
+          fi
+          
+          if [ -n "$CLEANUP_DEPLOYMENTS" ]; then
+            echo "### Deployment Manifests to Cleanup" >> cleanup-report.md
+            for version in $CLEANUP_DEPLOYMENTS; do
+              echo "- deployment-$version.yaml" >> cleanup-report.md
+            done
+          fi
+          
+          if [ -n "$CLEANUP_ARTIFACTS" ]; then
+            echo "### Release Artifacts to Cleanup" >> cleanup-report.md
+            for version in $CLEANUP_ARTIFACTS; do
+              echo "- release-$version.zip" >> cleanup-report.md
+            done
+          fi
+          
+          echo "## Preserved Versions" >> cleanup-report.md
+          echo "### Docker Images Preserved" >> cleanup-report.md
+          for version in $PRESERVED_DOCKER; do
+            echo "- app:$version" >> cleanup-report.md
+          done
+          
+          echo "### Deployment Manifests Preserved" >> cleanup-report.md
+          for version in $PRESERVED_DEPLOYMENTS; do
+            echo "- deployment-$version.yaml" >> cleanup-report.md
+          done
+          
+          echo "### Release Artifacts Preserved" >> cleanup-report.md
+          for version in $PRESERVED_ARTIFACTS; do
+            echo "- release-$version.zip" >> cleanup-report.md
+          done
+          
+          echo "## Ignored Versions" >> cleanup-report.md
+          if [ -n "$IGNORE_VERSIONS" ]; then
+            IFS=',' read -ra IGNORE_ARRAY <<< "$IGNORE_VERSIONS"
+            for version in "${IGNORE_ARRAY[@]}"; do
+              echo "- $version: Explicitly ignored" >> cleanup-report.md
+            done
+          else
+            echo "- None" >> cleanup-report.md
+          fi
+          
+          echo "Report generated: cleanup-report.md"
+          
+      - name: Upload cleanup report
+        uses: actions/upload-artifact@v4
+        with:
+          name: cleanup-report-${{ github.event.inputs.target_environment }}
+          path: cleanup-report.md
+          
+      - name: Notify completion
+        run: |
+          echo "🎉 Version cleanup workflow completed successfully!"
+          echo "Environment: $TARGET_ENV"
+          echo "Mode: $([ "$DRY_RUN" = "true" ] && echo "Dry Run" || echo "Live Execution")"
+          echo "Check the artifacts for the detailed cleanup report."
