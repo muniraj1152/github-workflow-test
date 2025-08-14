@@ -1,0 +1,87 @@
+name: Dev Version Publish
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - 'main'  # Change this to your target branch
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  publish-dev:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dev-version-publish-${{ github.head_ref || github.ref_name }}
+      cancel-in-progress: true
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref }}
+          
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@yourusername'  # Change this to your GitHub username
+          
+      - run: npm install
+      - run: npm run build
+        
+      - name: Generate dev version
+        id: version
+        run: |
+          # Get branch name
+          BRANCH_NAME=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}
+          
+          # Clean branch name for version
+          BRANCH_CLEAN=$(echo $BRANCH_NAME | sed 's/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]')
+          
+          # Get short commit hash
+          SHORT_SHA=$(echo $GITHUB_SHA | cut -c1-8)
+          
+          # Generate random number (3 digits)
+          RANDOM_NUM=$(printf "%03d" $((RANDOM % 1000)))
+          
+          # Get base version from package.json
+          BASE_VERSION=$(node -p "require('./package.json').version")
+          
+          # Generate dev version
+          DEV_VERSION="${BASE_VERSION}-${BRANCH_CLEAN}-${SHORT_SHA}-${RANDOM_NUM}"
+          
+          echo "Dev version: $DEV_VERSION"
+          echo "version=$DEV_VERSION" >> $GITHUB_OUTPUT
+          
+      - name: Update package version
+        run: npm version ${{ steps.version.outputs.version }} --no-git-tag-version
+          
+      - name: Publish to npm
+        run: |
+          npm publish --no-git-checks
+          npm dist-tag add @yourusername/your-package-name@${{ steps.version.outputs.version }} latest-dev
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ steps.version.outputs.version }}';
+            const body = '## 🚀 Dev Version Published\n\n' +
+              '**Version:** `' + version + '`\n\n' +
+              '**Install:** `npm install @yourusername/your-package-name@' + version + '`\n\n' +
+              '> **Note:** This version will be automatically deleted when PR is merged or closed.';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
