@@ -1,0 +1,207 @@
+name: Cleanup Dev Versions
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - 'main'  # Change this to your target branch
+
+  workflow_dispatch:
+    inputs:
+      ignore_versions:
+        description: 'Comma-separated list of versions to ignore during cleanup'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref || github.ref }}
+          
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@yourusername'  # Change this to your GitHub username
+          
+      - run: npm install
+        
+      - name: Get PR info
+        id: pr_info
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # Get PR details
+          PR_BRANCH="${{ github.event.pull_request.head.ref }}"
+          
+          # Check for ignore versions comment in PR
+          echo "Checking for IGNORE_CLEANUP_DEV_VERSION comment in PR..."
+          
+          IGNORE_VERSIONS=""
+          
+          if [[ -n "$PR_BODY" && "$PR_BODY" == *"IGNORE_CLEANUP_DEV_VERSION:"* ]]; then
+            IGNORE_VERSIONS="${PR_BODY#*IGNORE_CLEANUP_DEV_VERSION:}"
+            IGNORE_VERSIONS="${IGNORE_VERSIONS%%$'\n'*}"
+            IGNORE_VERSIONS="${IGNORE_VERSIONS#"${IGNORE_VERSIONS%%[! ]*}"}"
+            echo "Found IGNORE_CLEANUP_DEV_VERSION in PR body: $IGNORE_VERSIONS"
+          else
+            echo "No IGNORE_CLEANUP_DEV_VERSION found in PR body"
+          fi
+          
+          # Set PR outputs
+          echo "pr_branch=$PR_BRANCH" >> $GITHUB_OUTPUT
+          echo "ignore_versions=$IGNORE_VERSIONS" >> $GITHUB_OUTPUT
+          
+      - name: Wait for workflows to complete
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "Waiting 30 seconds for any running dev version publish workflows to complete..."
+          sleep 30
+          echo "Delay complete. Proceeding with cleanup..."
+          
+      - name: Cleanup dev versions
+        id: cleanup
+        run: |
+          # Package name - CHANGE THIS TO YOUR PACKAGE NAME
+          PACKAGE_NAME="@yourusername/your-package-name"
+          PACKAGE_NAME_CLEAN=$(echo $PACKAGE_NAME | sed 's/@yourusername\///')
+          
+          # Get PR branch for cleanup
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            TARGET_BRANCH="${{ github.event.pull_request.head.ref }}"
+            IGNORE_VERSIONS="${{ steps.pr_info.outputs.ignore_versions }}"
+            echo "DEBUG: Using PR source branch for cleanup"
+            echo "DEBUG: PR source branch = ${{ github.event.pull_request.head.ref }}"
+            echo "DEBUG: ignore_versions = ${{ steps.pr_info.outputs.ignore_versions }}"
+          else
+            # For manual trigger, use input
+            IGNORE_VERSIONS="${{ github.event.inputs.ignore_versions || '' }}"
+            TARGET_BRANCH="${{ github.ref_name }}"
+            echo "DEBUG: Using manual trigger inputs"
+          fi
+          
+          echo "Target branch for cleanup: $TARGET_BRANCH"
+          echo "Versions to ignore: $IGNORE_VERSIONS"
+          
+          # Configure npm for GitHub Package Registry
+          npm config set @yourusername:registry https://npm.pkg.github.com
+          npm config set //npm.pkg.github.com/:_authToken $GITHUB_TOKEN
+          
+          # Get all versions and filter for dev versions from this branch
+          BRANCH_CLEAN=$(echo $TARGET_BRANCH | sed 's/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]')
+          echo "Looking for versions matching branch: $BRANCH_CLEAN"
+          
+          VERSIONS=$(npm view $PACKAGE_NAME versions --json | jq -r '.[]' | grep -E ".*-${BRANCH_CLEAN}-[a-f0-9]{8}-[0-9]{3}$" || echo "")
+          
+          if [ -z "$VERSIONS" ]; then
+            echo "No dev versions found for branch: $TARGET_BRANCH"
+            echo "cleanup_count=0" >> $GITHUB_OUTPUT
+            echo "total_count=0" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "Found dev versions for branch $TARGET_BRANCH:"
+          echo "$VERSIONS"
+          
+          # Counter for cleanup
+          CLEANUP_COUNT=0
+          TOTAL_COUNT=0
+          
+          # Get package info and versions once
+          PACKAGE_RESPONSE=$(curl -s \
+            -H "Authorization: token ${{ github.token }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/user/packages/npm/$PACKAGE_NAME_CLEAN")
+          
+          # Extract package ID from response
+          PACKAGE_ID=$(echo "$PACKAGE_RESPONSE" | jq -r '.id // empty')
+          
+          if [ -z "$PACKAGE_ID" ]; then
+            echo "❌ Could not get package ID from response"
+            echo "cleanup_count=0" >> $GITHUB_OUTPUT
+            echo "total_count=0" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Get all package versions once
+          VERSIONS_RESPONSE=$(curl -s \
+            -H "Authorization: token ${{ github.token }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/user/packages/npm/$PACKAGE_NAME_CLEAN/versions")
+          
+          # Process each dev version
+          mapfile -t VERSION_ARRAY <<< "$VERSIONS"
+          
+          echo "Processing ${#VERSION_ARRAY[@]} versions..."
+          
+          for version in "${VERSION_ARRAY[@]}"; do
+            if [ -n "$version" ]; then
+              TOTAL_COUNT=$((TOTAL_COUNT + 1))
+              echo "Processing version $TOTAL_COUNT: $version"
+              
+              # Check if this version should be ignored
+              if [ -n "$IGNORE_VERSIONS" ]; then
+                IGNORE_MATCH=false
+                for ignore_version in $IGNORE_VERSIONS; do
+                  if [ "$version" = "$ignore_version" ]; then
+                    echo "  ⚠️  Ignoring version (in ignore list): $version"
+                    IGNORE_MATCH=true
+                    break
+                  fi
+                done
+                
+                if [ "$IGNORE_MATCH" = "true" ]; then
+                  continue
+                fi
+              fi
+              
+              echo "  ❌ Deleting version: $version"
+              
+              # Find the specific version ID from the cached response
+              VERSION_ID=$(echo "$VERSIONS_RESPONSE" | jq -r ".[] | select(.name == \"$version\") | .id // empty")
+              
+              if [ -z "$VERSION_ID" ]; then
+                echo "  ❌ Could not find version ID for $version"
+                continue
+              fi
+              
+              # Delete the specific version using the correct endpoint
+              DELETE_RESPONSE=$(curl -s -w "%{http_code}" \
+                -X DELETE \
+                -H "Authorization: token ${{ github.token }}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/user/packages/npm/$PACKAGE_NAME_CLEAN/versions/$VERSION_ID")
+              
+              # Extract HTTP status code (last 3 characters)
+              HTTP_STATUS="${DELETE_RESPONSE: -3}"
+              RESPONSE_BODY="${DELETE_RESPONSE%???}"
+              
+              if [ "$HTTP_STATUS" = "204" ] || [ "$HTTP_STATUS" = "200" ]; then
+                echo "  ✅ Successfully deleted $version via GitHub API"
+                CLEANUP_COUNT=$((CLEANUP_COUNT + 1))
+              else
+                echo "  ⚠️  Failed to delete $version via GitHub API (HTTP $HTTP_STATUS)"
+                echo "  Response: $RESPONSE_BODY"
+              fi
+            fi
+          done
+          
+          echo "Cleanup completed!"
+          echo "Total dev versions processed: $TOTAL_COUNT"
+          echo "Versions cleaned up: $CLEANUP_COUNT"
+          
+          # Set outputs for summary
+          echo "cleanup_count=$CLEANUP_COUNT" >> $GITHUB_OUTPUT
+          echo "total_count=$TOTAL_COUNT" >> $GITHUB_OUTPUT
