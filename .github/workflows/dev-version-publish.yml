@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: '18'
           registry-url: 'https://npm.pkg.github.com'
-          scope: '@yourusername'  # Replace with your actual GitHub username
+          scope: '@muniraj1152'
           
       - run: npm install
       - run: npm run build
@@ -38,22 +38,11 @@ jobs:
       - name: Generate dev version
         id: version
         run: |
-          # Get branch name
           BRANCH_NAME=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}
-          
-          # Clean branch name for version
           BRANCH_CLEAN=$(echo $BRANCH_NAME | sed 's/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]')
-          
-          # Get short commit hash
           SHORT_SHA=$(echo $GITHUB_SHA | cut -c1-8)
-          
-          # Generate random number (3 digits)
           RANDOM_NUM=$(printf "%03d" $((RANDOM % 1000)))
-          
-          # Get base version from package.json
           BASE_VERSION=$(node -p "require('./package.json').version")
-          
-          # Generate dev version
           DEV_VERSION="${BASE_VERSION}-${BRANCH_CLEAN}-${SHORT_SHA}-${RANDOM_NUM}"
           
           echo "Dev version: $DEV_VERSION"
@@ -65,7 +54,7 @@ jobs:
       - name: Publish to npm
         run: |
           npm publish --no-git-checks
-          npm dist-tag add @yourusername/your-package-name@${{ steps.version.outputs.version }} latest-dev
+          npm dist-tag add @muniraj1152/github-workflow-test@${{ steps.version.outputs.version }} latest-dev
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
@@ -76,7 +65,7 @@ jobs:
             const version = '${{ steps.version.outputs.version }}';
             const body = '## 🚀 Dev Version Published\n\n' +
               '**Version:** `' + version + '`\n\n' +
-              '**Install:** `npm install @yourusername/your-package-name@' + version + '`\n\n' +
+              '**Install:** `npm install @muniraj1152/github-workflow-test@' + version + '`\n\n' +
               '> **Note:** This version will be automatically deleted when PR is merged or closed.';
             
             github.rest.issues.createComment({
